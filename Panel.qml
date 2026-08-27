@@ -213,7 +213,7 @@ Panel {
   // ---- import / export -------------------------------------------------
 
   function beginExport() {
-    exportPickProc.command = ["omarchy-file-select", "--save-as", "snippets.json", "--title", "Export Snippets", "--extensions", "json"]
+    exportPickProc.command = [root.binPath("omarchy-snippets-file-select"), "--save-as", "snippets.json", "--title", "Export Snippets", "--extensions", "json"]
     exportPickProc.running = true
   }
 
@@ -224,7 +224,7 @@ Panel {
   }
 
   function beginImport() {
-    importPickProc.command = ["omarchy-file-select", "--title", "Import Snippets", "--extensions", "json"]
+    importPickProc.command = [root.binPath("omarchy-snippets-file-select"), "--title", "Import Snippets", "--extensions", "json"]
     importPickProc.running = true
   }
 

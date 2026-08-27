@@ -85,10 +85,15 @@ Keyboard, once open:
 - A running Omarchy install with the plugin system (`omarchy plugin ...`
   commands available)
 - `jq` and `wl-clipboard` (`wl-copy`), used by the bundled CLI scripts
-- `omarchy-file-select` with `--save-as` support (used for export's Save
-  File dialog) -- ships with current Omarchy; if your Omarchy is old enough
-  to lack it, export will fail with a clear file-picker error and import
-  will still work
+- `python3` with `PyGObject` (the `gi` module), used by the bundled file
+  picker (`bin/omarchy-snippets-file-select`) for Import/Export -- this is
+  already a standard Omarchy desktop dependency, not something to install
+  separately
+
+The Import/Export file picker is bundled with this plugin rather than
+relying on Omarchy core's `omarchy-file-select`, because core's SaveFile
+support (needed for Export's "choose a filename" dialog) isn't present on
+every Omarchy install. This plugin never depends on that core command.
 
 ## Storage
 
