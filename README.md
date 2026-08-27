@@ -113,8 +113,23 @@ omarchy plugin enable community.shoxjaxon.snippets --section right
 ```
 
 Editing files under `~/.config/omarchy/plugins/community.shoxjaxon.snippets/`
-hot-reloads automatically; use `omarchy-shell shell rescanPlugins` if a
-change doesn't pick up.
+is meant to hot-reload automatically. In practice, for a `bar-widget` kind
+plugin like this one, that reload can be unreliable -- the shell log
+(`~/.cache` / `$XDG_RUNTIME_DIR/quickshell/by-id/*/log.log`) may show
+repeated "Local plugin changed, reloading" entries alongside "Handler was
+registered but will not be used" warnings, meaning a stale duplicate
+instance is still around instead of a clean reload. `omarchy-shell shell
+rescanPlugins` does not fix this either (it only re-scans manifests, not
+already-mounted bar-widget instances). If you see stale behavior after
+editing code, run a full:
+
+```sh
+omarchy restart shell
+```
+
+This is disruptive (the bar disappears and reappears for a moment) but
+guarantees the widget is rebuilt from the current source. When in doubt
+after any code change, do this rather than trusting the hot reload.
 
 Tests:
 
