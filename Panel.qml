@@ -310,47 +310,135 @@ Panel {
 
   // copyProc is separate from the detached pattern so the UI can confirm
   // success or surface a failure notification only after the clipboard write
-  // completes. pendingName carries the display name through to onExited.
+  // completes. pendingName carries the display name through to completion.
+  //
+  // Reading Process.exitCode from inside a StdioCollector's onStreamFinished
+  // is not safe on its own: Quickshell can fire a stream's onStreamFinished
+  // before Process.onExited has run, in which case exitCode reads back as
+  // undefined (confirmed against Quickshell 0.3.1). Every Process below
+  // instead captures the exit code from onExited's own parameter -- which is
+  // always correct, ordering aside -- and only acts once both onExited and
+  // the stream have reported in, the same checkFinished() gate already used
+  // by exportPickProc/importPickProc/importPreviewProc/importApplyProc.
   Process {
     id: copyProc
     property string pendingName: ""
-    stderr: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
+    property bool exited: false
+    property bool stderrFinished: false
+    property int finalExitCode: -1
+    property string stderrText: ""
+
+    function checkFinished() {
+      if (exited && stderrFinished) {
         var name = copyProc.pendingName
-        var code = copyProc.exitCode
-        if (code === 0) {
+        if (finalExitCode === 0) {
           root.close()
           Quickshell.execDetached(["omarchy-notification-send", "Copied \"" + name + "\"", "-t", "1500"])
         } else {
-          Quickshell.execDetached(["omarchy-notification-send", text.trim() || "Could not copy snippet.", "-u", "critical", "-t", "3000"])
+          Quickshell.execDetached(["omarchy-notification-send", stderrText.trim() || "Could not copy snippet.", "-u", "critical", "-t", "3000"])
         }
       }
+    }
+
+    onRunningChanged: {
+      if (running) {
+        exited = false; stderrFinished = false;
+        finalExitCode = -1; stderrText = "";
+      }
+    }
+
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        copyProc.stderrText = text
+        copyProc.stderrFinished = true
+        copyProc.checkFinished()
+      }
+    }
+
+    onExited: function(exitCode) {
+      copyProc.finalExitCode = exitCode
+      copyProc.exited = true
+      copyProc.checkFinished()
     }
   }
 
   Process {
     id: saveProc
+    property bool exited: false
+    property bool stderrFinished: false
+    property int finalExitCode: -1
+    property string stderrText: ""
+
+    function checkFinished() {
+      if (exited && stderrFinished) {
+        root.onSaveFinished(finalExitCode, stderrText)
+      }
+    }
+
+    onRunningChanged: {
+      if (running) {
+        exited = false; stderrFinished = false;
+        finalExitCode = -1; stderrText = "";
+      }
+    }
+
     stdout: StdioCollector {}
     stderr: StdioCollector {
       waitForEnd: true
-      onStreamFinished: root.onSaveFinished(saveProc.exitCode, text)
+      onStreamFinished: {
+        saveProc.stderrText = text
+        saveProc.stderrFinished = true
+        saveProc.checkFinished()
+      }
+    }
+
+    onExited: function(exitCode) {
+      saveProc.finalExitCode = exitCode
+      saveProc.exited = true
+      saveProc.checkFinished()
     }
   }
 
   Process {
     id: deleteProc
-    stderr: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        if (deleteProc.exitCode === 0) {
+    property bool exited: false
+    property bool stderrFinished: false
+    property int finalExitCode: -1
+    property string stderrText: ""
+
+    function checkFinished() {
+      if (exited && stderrFinished) {
+        if (finalExitCode === 0) {
           root.onDeleteFinished()
         } else {
-          Quickshell.execDetached(["omarchy-notification-send", text.trim() || "Could not delete snippet.", "-u", "critical", "-t", "3000"])
+          Quickshell.execDetached(["omarchy-notification-send", stderrText.trim() || "Could not delete snippet.", "-u", "critical", "-t", "3000"])
           root.view = "list"
           Qt.callLater(function() { searchField.forceActiveFocus() })
         }
       }
+    }
+
+    onRunningChanged: {
+      if (running) {
+        exited = false; stderrFinished = false;
+        finalExitCode = -1; stderrText = "";
+      }
+    }
+
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        deleteProc.stderrText = text
+        deleteProc.stderrFinished = true
+        deleteProc.checkFinished()
+      }
+    }
+
+    onExited: function(exitCode) {
+      deleteProc.finalExitCode = exitCode
+      deleteProc.exited = true
+      deleteProc.checkFinished()
     }
   }
 
@@ -399,13 +487,39 @@ Panel {
 
   Process {
     id: exportProc
+    property bool exited: false
+    property bool stderrFinished: false
+    property int finalExitCode: -1
+    property string stderrText: ""
+
+    function checkFinished() {
+      if (exited && stderrFinished) {
+        if (finalExitCode !== 0) {
+          Quickshell.execDetached(["omarchy-notification-send", stderrText.trim() || "Export failed.", "-u", "critical", "-t", "3000"])
+        }
+      }
+    }
+
+    onRunningChanged: {
+      if (running) {
+        exited = false; stderrFinished = false;
+        finalExitCode = -1; stderrText = "";
+      }
+    }
+
     stderr: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        if (exportProc.exitCode !== 0) {
-          Quickshell.execDetached(["omarchy-notification-send", text.trim() || "Export failed.", "-u", "critical", "-t", "3000"])
-        }
+        exportProc.stderrText = text
+        exportProc.stderrFinished = true
+        exportProc.checkFinished()
       }
+    }
+
+    onExited: function(exitCode) {
+      exportProc.finalExitCode = exitCode
+      exportProc.exited = true
+      exportProc.checkFinished()
     }
   }
 
