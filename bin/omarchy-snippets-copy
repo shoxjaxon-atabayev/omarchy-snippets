@@ -1,0 +1,21 @@
+#!/bin/bash
+
+# Copy a snippet's content to the clipboard.
+# Usage: omarchy-snippets-copy <id>
+# Internal: invoked by Panel.qml via Process, not meant to be run by hand.
+
+set -euo pipefail
+
+source "$(dirname "$(readlink -f "$0")")/omarchy-snippets-lib"
+
+id=${1:-}
+[[ -n $id ]] || snippets_fail "Snippet not found."
+
+store=$(snippets_load)
+
+exists=$(jq -r --arg id "$id" '[.snippets[] | select(.id == $id)] | length' <<<"$store")
+(( exists > 0 )) || snippets_fail "Snippet not found."
+
+# -j (raw output, no trailing newline) guarantees the clipboard gets exactly
+# snippet.content, byte for byte -- see docs/snippet-manager.md section 21.
+jq -j --arg id "$id" '.snippets[] | select(.id == $id) | .content' <<<"$store" | wl-copy
