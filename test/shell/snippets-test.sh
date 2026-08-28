@@ -318,3 +318,98 @@ grep -q 'Could not read snippet store' /tmp/snippets-symlink-err.$$ \
   || fail "snippets CLI surfaces a clear error for a hostile store"
 rm -f /tmp/snippets-symlink-err.$$ "$read_store_path"
 pass "snippets CLI refuses to operate against a symlinked store"
+
+# ---- import file read hardening -------------------------------------------
+# Regression coverage for the security-review finding: the user-selected
+# import file is opened exactly once by omarchy-snippets-import-read
+# (no-follow, nonblocking) and bounded (size, record count, field lengths)
+# before omarchy-snippets-import-preview/-import-apply ever see it, rather
+# than being reopened by path repeatedly with unrestricted jq reads.
+
+IMPORT_DIR="$TMPDIR/import-fixtures"
+mkdir -p "$IMPORT_DIR"
+import_read() { "$ROOT/bin/omarchy-snippets-import-read" "$1"; }
+
+echo '{"version":1,"snippets":[{"name":"a","content":"b"}]}' >"$IMPORT_DIR/valid.json"
+[[ $(import_read "$IMPORT_DIR/valid.json") == '{"version": 1, "snippets": [{"name": "a", "content": "b"}]}' ]] \
+  || fail "snippets import-read returns the validated document for a valid file"
+pass "snippets import-read returns the validated document for a valid file"
+
+ln -s /etc/passwd "$IMPORT_DIR/symlink.json"
+import_read "$IMPORT_DIR/symlink.json" >/dev/null 2>&1 && fail "snippets import-read refuses to follow a symlinked import file"
+pass "snippets import-read refuses to follow a symlinked import file"
+
+mkfifo "$IMPORT_DIR/fifo.json"
+set +e
+timeout 5 "$ROOT/bin/omarchy-snippets-import-read" "$IMPORT_DIR/fifo.json" >/dev/null 2>&1
+import_fifo_status=$?
+set -e
+rm -f "$IMPORT_DIR/fifo.json"
+((import_fifo_status != 124)) || fail "snippets import-read must not block on a FIFO import file" "read hung and was killed by timeout"
+((import_fifo_status != 0)) || fail "snippets import-read rejects a FIFO import file"
+pass "snippets import-read rejects a FIFO import file without blocking"
+
+node -e '
+process.stdout.write(JSON.stringify({ version: 1, snippets: [{ name: "big", content: "x".repeat(11 * 1024 * 1024) }] }))
+' >"$IMPORT_DIR/oversized.json"
+import_read "$IMPORT_DIR/oversized.json" >/dev/null 2>/tmp/snippets-import-oversized-err.$$ && fail "snippets import-read rejects an oversized import file"
+grep -q 'too large' /tmp/snippets-import-oversized-err.$$ || fail "snippets import-read names the too-large error"
+rm -f /tmp/snippets-import-oversized-err.$$
+pass "snippets import-read rejects an oversized import file"
+
+echo 'not json' >"$IMPORT_DIR/malformed.json"
+import_read "$IMPORT_DIR/malformed.json" >/dev/null 2>&1 && fail "snippets import-read rejects malformed JSON"
+pass "snippets import-read rejects malformed JSON"
+
+echo '{"foo":"bar"}' >"$IMPORT_DIR/wrongshape.json"
+import_read "$IMPORT_DIR/wrongshape.json" >/dev/null 2>&1 && fail "snippets import-read rejects the wrong JSON shape"
+pass "snippets import-read rejects the wrong JSON shape"
+
+node -e '
+const items = []
+for (let i = 0; i < 5001; i++) items.push({ name: "n" + i, content: "c" + i })
+process.stdout.write(JSON.stringify({ version: 1, snippets: items }))
+' >"$IMPORT_DIR/toomany.json"
+import_read "$IMPORT_DIR/toomany.json" >/dev/null 2>/tmp/snippets-import-toomany-err.$$ && fail "snippets import-read rejects too many records"
+grep -q 'too many snippets' /tmp/snippets-import-toomany-err.$$ || fail "snippets import-read names the too-many-records error"
+rm -f /tmp/snippets-import-toomany-err.$$
+pass "snippets import-read rejects too many records"
+
+node -e '
+process.stdout.write(JSON.stringify({ version: 1, snippets: [{ name: "n".repeat(201), content: "c" }] }))
+' >"$IMPORT_DIR/longname.json"
+import_read "$IMPORT_DIR/longname.json" >/dev/null 2>/tmp/snippets-import-longname-err.$$ && fail "snippets import-read rejects an excessively long name"
+grep -q 'name is too long' /tmp/snippets-import-longname-err.$$ || fail "snippets import-read names the name-too-long error"
+rm -f /tmp/snippets-import-longname-err.$$
+pass "snippets import-read rejects an excessively long name"
+
+node -e '
+process.stdout.write(JSON.stringify({ version: 1, snippets: [{ name: "n", content: "c".repeat(100001) }] }))
+' >"$IMPORT_DIR/longcontent.json"
+import_read "$IMPORT_DIR/longcontent.json" >/dev/null 2>/tmp/snippets-import-longcontent-err.$$ && fail "snippets import-read rejects excessively long content"
+grep -q 'content is too long' /tmp/snippets-import-longcontent-err.$$ || fail "snippets import-read names the content-too-long error"
+rm -f /tmp/snippets-import-longcontent-err.$$
+pass "snippets import-read rejects excessively long content"
+
+# Pathname replacement / TOCTOU: what's at the path when the CLI opens it,
+# not what was there when it was selected, is what must be validated. This
+# can't spawn a real concurrent racer safely in a test, but it does prove
+# the file is evaluated at the single open() import-read performs, not at
+# some earlier check -- a plain file is swapped for a symlink before the
+# only read happens, and that read must still reject it.
+echo '{"version":1,"snippets":[{"name":"race","content":"x"}]}' >"$IMPORT_DIR/race.json"
+rm -f "$IMPORT_DIR/race.json"
+ln -s /etc/shadow "$IMPORT_DIR/race.json"
+import_read "$IMPORT_DIR/race.json" >/dev/null 2>&1 && fail "snippets import-read rejects a path swapped to a symlink before the single read"
+pass "snippets import-read rejects a path swapped to a symlink before the single read"
+
+# CLI wiring: import-preview and import-apply must fail through the same
+# hardened reader too, not just omarchy-snippets-import-read directly.
+"$ROOT/bin/omarchy-snippets-import-preview" "$IMPORT_DIR/race.json" >/dev/null 2>&1 \
+  && fail "snippets import-preview refuses a symlinked import file"
+pass "snippets import-preview refuses a symlinked import file"
+"$ROOT/bin/omarchy-snippets-import-apply" "$IMPORT_DIR/race.json" '[]' >/dev/null 2>&1 \
+  && fail "snippets import-apply refuses a symlinked import file"
+pass "snippets import-apply refuses a symlinked import file"
+
+rm -rf "$IMPORT_DIR"

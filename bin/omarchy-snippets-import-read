@@ -1,0 +1,147 @@
+#!/usr/bin/python3
+
+# Safely open, validate, and bound a user-selected import file, printing the
+# validated document as JSON to stdout.
+# Usage: omarchy-snippets-import-read <path>
+# Internal: invoked by omarchy-snippets-import-preview and
+# omarchy-snippets-import-apply, not meant to be run by hand.
+#
+# The selected path is picked by the user through the desktop file picker,
+# but the picker only returns a path -- what's actually there by the time
+# this script opens it is a separate question, and an unprivileged process
+# racing that path (or the path pointing at a symlink/FIFO/huge file to
+# begin with) must not be able to make the reader follow it, block on it,
+# or exhaust memory reading or parsing it. As with omarchy-snippets-read for
+# the store itself, this opens the path exactly once with
+# O_NOFOLLOW|O_NONBLOCK and does every check (regular file, ownership, size)
+# via fstat/read on that resulting descriptor -- never the path again --
+# then bounds record count and field lengths before anything downstream
+# (jq, the reduce logic in -import-preview/-import-apply) ever sees it.
+# Both callers pass the validated JSON text this prints as one in-memory
+# snapshot rather than reopening the path.
+
+import errno
+import json
+import os
+import re
+import stat
+import sys
+
+SNIPPETS_VERSION = 1
+
+# Same firm-but-generous bound as omarchy-snippets-read uses for the store
+# itself: bytes on disk before any parsing is attempted.
+MAX_BYTES = 10 * 1024 * 1024
+# Caps on the parsed document, so a small-enough-to-pass-MAX_BYTES file can
+# still not blow up later record-by-record processing (duplicate-name
+# suffixing, the store-merge reduce) with pathological cardinality.
+MAX_RECORDS = 5000
+MAX_NAME_LENGTH = 200
+MAX_CONTENT_LENGTH = 100_000
+
+_BLANK_CHARS = re.compile(r"[ \t\n\r]")
+
+
+def blank(value):
+    return len(_BLANK_CHARS.sub("", value)) == 0
+
+
+def fail(message):
+    sys.stderr.write(message + "\n")
+    sys.exit(1)
+
+
+def main():
+    if len(sys.argv) != 2 or not sys.argv[1]:
+        fail("Invalid snippet file.")
+
+    path = sys.argv[1]
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+    try:
+        fd = os.open(path, flags)
+    except OSError:
+        # Covers a missing file, a symlink (ELOOP), permission errors, and
+        # anything else open() can raise -- all "can't safely import this".
+        fail("Invalid snippet file.")
+        return
+
+    try:
+        st = os.fstat(fd)
+
+        if not stat.S_ISREG(st.st_mode):
+            fail("Invalid snippet file.")
+
+        # Accepting self- or root-owned files (not just self-owned, unlike
+        # the fixed-path store) keeps legitimate imports working -- an
+        # exported file downloaded from elsewhere, or a root-seeded example
+        # -- while still rejecting a file another unprivileged user planted
+        # or swapped in at the selected path.
+        if st.st_uid != os.getuid() and st.st_uid != 0:
+            fail("Invalid snippet file.")
+
+        if st.st_size > MAX_BYTES:
+            fail("Snippet file is too large.")
+
+        data = os.read(fd, MAX_BYTES + 1)
+        if len(data) > MAX_BYTES:
+            fail("Snippet file is too large.")
+    finally:
+        os.close(fd)
+
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        fail("Invalid snippet file.")
+        return
+
+    try:
+        parsed = json.loads(text)
+    except (ValueError, RecursionError):
+        fail("Invalid snippet file.")
+        return
+
+    if not isinstance(parsed, dict) or "version" not in parsed or "snippets" not in parsed:
+        fail("Invalid snippet file.")
+        return
+
+    if str(parsed["version"]) != str(SNIPPETS_VERSION):
+        fail("Unsupported snippet format version.")
+        return
+
+    snippets = parsed["snippets"]
+    if not isinstance(snippets, list):
+        fail("Invalid snippet file.")
+        return
+
+    if len(snippets) > MAX_RECORDS:
+        fail("Snippet file has too many snippets.")
+        return
+
+    for item in snippets:
+        if not isinstance(item, dict):
+            fail("Invalid snippet file.")
+            return
+
+        name = item.get("name")
+        content = item.get("content")
+        if not isinstance(name, str) or not isinstance(content, str):
+            fail("Invalid snippet file.")
+            return
+
+        if blank(name) or blank(content):
+            fail("Invalid snippet file.")
+            return
+
+        if len(name) > MAX_NAME_LENGTH:
+            fail("Snippet name is too long.")
+            return
+
+        if len(content) > MAX_CONTENT_LENGTH:
+            fail("Snippet content is too long.")
+            return
+
+    print(json.dumps(parsed))
+
+
+if __name__ == "__main__":
+    main()

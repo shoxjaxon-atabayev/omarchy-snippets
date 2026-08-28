@@ -1146,3 +1146,33 @@ as a `Process`, the same pattern already used for every other CLI call in
 this file. Writes are unaffected by any of this -- `snippets_write` in
 `bin/omarchy-snippets-lib` still writes atomically (temp file + rename) at
 `0600`, as before.
+
+---
+
+# 42. Import File Read Hardening
+
+The import file is different from the store: its path isn't fixed, it's
+whatever the user picks in the file chooser. But `omarchy-snippets-import-preview`
+and `omarchy-snippets-import-apply` both used to check it with a plain `-f`
+test and then reopen it by path several times through `jq` -- a check-then-open
+race, no protection against a FIFO or symlink, and no cap on size or on how
+many records/how long a name or content string could be before that data
+reached the conflict/merge logic.
+
+Both now call one shared script, `bin/omarchy-snippets-import-read <path>`,
+through `snippets_load_import` in `bin/omarchy-snippets-lib`. Same shape as
+the store reader: one `O_NOFOLLOW | O_NONBLOCK` open, every check done via
+`fstat`/`read` on that resulting descriptor, never the path again. It must
+be a regular file, owned by the current user or root (root-owned to allow a
+seeded example file; not "any owner", since another unprivileged user
+planting or swapping the file at the selected path is exactly the race this
+closes), and no larger than 10 MiB. Beyond that, it also validates and
+bounds the *parsed* document before printing it: format/version (preserving
+the exact existing "Unsupported snippet format version." message), at most
+5000 records, names up to 200 characters, and content up to 100,000
+characters each -- so a file that's small enough to pass the byte cap can't
+still blow up the later `jq` conflict-resolution/merge reduce with
+pathological record count or field size. `import-preview` and `import-apply`
+each capture its stdout once (`import_doc=$(snippets_load_import "$file")`)
+and pass that single in-memory JSON snapshot to every `jq` call after --
+neither script touches `$file` again once that call returns.

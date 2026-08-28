@@ -16,28 +16,15 @@ source "$(dirname "$(readlink -f "$0")")/omarchy-snippets-lib"
 
 file=${1:-}
 resolutions=${2:-[]}
-[[ -n $file && -f $file ]] || snippets_fail "Invalid snippet file."
+[[ -n $file ]] || snippets_fail "Invalid snippet file."
 
-jq -e 'type == "object" and has("version") and has("snippets")' "$file" >/dev/null 2>&1 \
-  || snippets_fail "Invalid snippet file."
-version=$(jq -r '.version' "$file" 2>/dev/null || echo "")
-[[ $version == "$SNIPPETS_VERSION" ]] || snippets_fail "Unsupported snippet format version."
-jq -e '
-  (.snippets | type == "array")
-  and (.snippets | all(
-    type == "object"
-    and (has("name") and has("content"))
-    and (.name | type == "string")
-    and (.content | type == "string")
-    and (.name | gsub("[ \t\n\r]"; "") | length > 0)
-    and (.content | gsub("[ \t\n\r]"; "") | length > 0)
-  ))
-' "$file" >/dev/null 2>&1 || snippets_fail "Invalid snippet file."
+import_doc=$(snippets_load_import "$file")
+
 jq -e 'type == "array" and all(type == "object" and has("name") and has("action"))' \
   <<<"$resolutions" >/dev/null 2>&1 || snippets_fail "Could not import snippets."
 
 store=$(snippets_load)
-imported=$(jq '.snippets' "$file")
+imported=$(jq '.snippets' <<<"$import_doc")
 
 # One new id per imported entry is the worst case (every entry turns out to
 # be brand-new or resolved as "keep both"); over-provisioning is cheap and

@@ -23,6 +23,19 @@ snippets_load() {
   "$(dirname "${BASH_SOURCE[0]}")/omarchy-snippets-read" || snippets_fail "Could not read snippet store."
 }
 
+# Reads and validates a user-selected import file through
+# omarchy-snippets-import-read: one no-follow/nonblocking open, fstat
+# checks (regular file, self- or root-owned, size-capped), and bounds on
+# record count and name/content length, all before the caller sees any of
+# it. Prints the validated document; the caller never reopens $1 by path
+# afterward. Failure messages (including the exact "Unsupported snippet
+# format version." text callers depend on) come from that script, so this
+# is deliberately not wrapped in a generic snippets_fail fallback.
+snippets_load_import() {
+  local file=$1
+  "$(dirname "${BASH_SOURCE[0]}")/omarchy-snippets-import-read" "$file"
+}
+
 # Atomically replace the store with $1 (a JSON document), keeping it
 # non-readable to other users throughout.
 snippets_write() {
