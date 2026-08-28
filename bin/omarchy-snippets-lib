@@ -12,12 +12,15 @@ SNIPPETS_DIR="$HOME/.local/state/omarchy"
 SNIPPETS_PATH="$SNIPPETS_DIR/snippets.json"
 SNIPPETS_VERSION=1
 
+# Reads the store through omarchy-snippets-read rather than `cat`ing
+# $SNIPPETS_PATH directly: that script opens the path once with
+# O_NOFOLLOW|O_NONBLOCK and validates the resulting descriptor (regular
+# file, owned by us, under the size cap) before reading it, so a planted
+# symlink, FIFO, or oversized file at this predictable path can't be
+# followed, block the shell, or be read unbounded -- see its header for
+# the full rationale.
 snippets_load() {
-  if [[ -f $SNIPPETS_PATH ]]; then
-    cat "$SNIPPETS_PATH"
-  else
-    printf '{"version":%s,"snippets":[]}' "$SNIPPETS_VERSION"
-  fi
+  "$(dirname "${BASH_SOURCE[0]}")/omarchy-snippets-read" || snippets_fail "Could not read snippet store."
 }
 
 # Atomically replace the store with $1 (a JSON document), keeping it

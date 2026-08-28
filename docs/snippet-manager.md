@@ -1108,3 +1108,41 @@ Everything else in this document -- the data model, storage location and
 permissions, the versioned import/export format, conflict-resolution
 semantics, security requirements, and testing expectations -- is unchanged
 and still describes the plugin's actual behavior.
+
+---
+
+# 41. Store Read Hardening
+
+`snippets.json` lives at a predictable, fixed path
+(`~/.local/state/omarchy/snippets.json`). Anything else running as the same
+user could plant a symlink, FIFO, or oversized regular file at that path
+before the plugin reads it, so every read of the live store -- from
+Panel.qml and from every `bin/omarchy-snippets-*` CLI helper -- goes through
+one script, `bin/omarchy-snippets-read`, rather than a generic file read.
+
+That script opens the path once with `O_NOFOLLOW | O_NONBLOCK`, then
+validates and reads through the resulting file descriptor -- never the path
+again -- so there is no window between checking and reading for the target
+to change:
+
+- `O_NOFOLLOW` rejects a symlinked store outright (open fails with `ELOOP`).
+- `O_NONBLOCK` stops opening a FIFO from hanging the caller waiting for a
+  writer; the file-type check below then rejects it for not being regular.
+- The descriptor must `fstat` as a regular file, owned by the current user,
+  no larger than a fixed cap, before any bytes are read.
+- The bytes read are capped at that same size, decoded as UTF-8, and parsed
+  as JSON with the expected `{version, snippets: [...]}` shape before being
+  treated as the store; anything else is rejected rather than passed through.
+
+A missing store still resolves to the same empty document
+(`{"version":1,"snippets":[]}`) every read path already treated as "no
+snippets yet."
+
+Panel.qml no longer reads `snippets.json` through a `FileView` pointed at
+that path: `FileView` has no way to require `O_NOFOLLOW`/`O_NONBLOCK`, a
+regular file, correct ownership, or a size cap, so it could not be hardened
+to the same standard as the script above. It calls `omarchy-snippets-read`
+as a `Process`, the same pattern already used for every other CLI call in
+this file. Writes are unaffected by any of this -- `snippets_write` in
+`bin/omarchy-snippets-lib` still writes atomically (temp file + rename) at
+`0600`, as before.

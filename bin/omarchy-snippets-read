@@ -1,0 +1,96 @@
+#!/usr/bin/python3
+
+# Safely read the snippet store and print validated, bounded JSON to stdout.
+# Usage: omarchy-snippets-read
+# Internal: invoked by Panel.qml via Process and by omarchy-snippets-lib's
+# snippets_load(), not meant to be run by hand.
+#
+# The store path is predictable ($HOME/.local/state/omarchy/snippets.json)
+# and snippet content can hold credentials, so this is the one place in the
+# plugin that turns that path into bytes. A planted symlink, FIFO, device
+# node, or oversized regular file at that path must not be able to make the
+# reader follow it, block on it, or exhaust memory reading it. This is done
+# with a single open() carrying O_NOFOLLOW|O_NONBLOCK, followed by fstat/read
+# on that same file descriptor -- never on the path again -- so there is no
+# window between validating and reading for something else to be swapped in.
+#
+# O_NOFOLLOW rejects a symlink as the final path component (ELOOP).
+# O_NONBLOCK keeps opening a FIFO from blocking until a writer shows up
+# (POSIX open() semantics); the fstat check below then rejects it for not
+# being a regular file. Ownership and size are checked on the fd's fstat
+# result before any read happens, so nothing past that check can grow past
+# the cap or belong to another user by the time it's read.
+
+import errno
+import json
+import os
+import stat
+import sys
+
+STORE_PATH = os.path.join(
+    os.path.expanduser("~"), ".local", "state", "omarchy", "snippets.json"
+)
+SNIPPETS_VERSION = 1
+# Generous headroom over any realistic snippet collection while still being
+# a firm, auditable bound rather than "however big the disk allows".
+MAX_BYTES = 10 * 1024 * 1024
+DEFAULT_STORE = '{"version":%d,"snippets":[]}' % SNIPPETS_VERSION
+
+
+def fail(message):
+    sys.stderr.write(message + "\n")
+    sys.exit(1)
+
+
+def main():
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+    try:
+        fd = os.open(STORE_PATH, flags)
+    except OSError as error:
+        if error.errno == errno.ENOENT:
+            print(DEFAULT_STORE)
+            return
+        if error.errno == errno.ELOOP:
+            fail("Snippet store path is a symlink, refusing to follow it.")
+        fail("Could not open snippet store.")
+        return
+
+    try:
+        st = os.fstat(fd)
+
+        if not stat.S_ISREG(st.st_mode):
+            fail("Snippet store is not a regular file.")
+
+        if st.st_uid != os.getuid():
+            fail("Snippet store is not owned by the current user.")
+
+        if st.st_size > MAX_BYTES:
+            fail("Snippet store exceeds the maximum allowed size.")
+
+        data = os.read(fd, MAX_BYTES + 1)
+        if len(data) > MAX_BYTES:
+            fail("Snippet store exceeds the maximum allowed size.")
+    finally:
+        os.close(fd)
+
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        fail("Snippet store is not valid UTF-8.")
+        return
+
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        fail("Snippet store is not valid JSON.")
+        return
+
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("snippets"), list):
+        fail("Snippet store JSON does not match the expected shape.")
+        return
+
+    print(text)
+
+
+if __name__ == "__main__":
+    main()

@@ -248,3 +248,73 @@ pass "snippets copy handles a __proto__-named snippet like any other"
 [[ $(jq '[.snippets[] | select(.name == "__proto__")] | length' "$snippets_store_path") == "0" ]] \
   || fail "snippets delete removes a __proto__-named snippet"
 pass "snippets delete removes a __proto__-named snippet"
+
+# ---- store read hardening -------------------------------------------------
+# Regression coverage for the security-review finding: snippets.json lives
+# at a predictable path, so a planted symlink, FIFO, or oversized regular
+# file there must be rejected by omarchy-snippets-read (and, through it,
+# every CLI helper's snippets_load) rather than followed, blocked on, or
+# read unbounded. Uses its own HOME so these fixtures never touch the store
+# the tests above already exercised.
+
+READ_HOME=$(mktemp -d)
+trap 'rm -rf "$TMPDIR" "$READ_HOME"' EXIT
+mkdir -p "$READ_HOME/.local/state/omarchy"
+read_store_path="$READ_HOME/.local/state/omarchy/snippets.json"
+
+read_store() { HOME="$READ_HOME" "$ROOT/bin/omarchy-snippets-read"; }
+
+rm -f "$read_store_path"
+[[ $(read_store) == '{"version":1,"snippets":[]}' ]] \
+  || fail "snippets read returns the empty-store default when the file is missing"
+pass "snippets read returns the empty-store default when the file is missing"
+
+echo '{"version":1,"snippets":[{"id":"1","name":"a","content":"b"}]}' >"$read_store_path"
+[[ $(read_store) == '{"version":1,"snippets":[{"id":"1","name":"a","content":"b"}]}' ]] \
+  || fail "snippets read returns valid bounded JSON unchanged"
+pass "snippets read returns valid bounded JSON unchanged"
+
+echo 'not json' >"$read_store_path"
+read_store >/dev/null 2>&1 && fail "snippets read rejects malformed JSON"
+pass "snippets read rejects malformed JSON"
+
+rm -f "$read_store_path"
+ln -s /etc/passwd "$read_store_path"
+read_store >/dev/null 2>&1 && fail "snippets read refuses to follow a symlinked store"
+pass "snippets read refuses to follow a symlinked store"
+
+rm -f "$read_store_path"
+mkfifo "$read_store_path"
+set +e
+timeout 5 env HOME="$READ_HOME" "$ROOT/bin/omarchy-snippets-read" >/dev/null 2>&1
+fifo_status=$?
+set -e
+rm -f "$read_store_path"
+((fifo_status != 124)) || fail "snippets read must not block on a FIFO store" "read hung and was killed by timeout"
+((fifo_status != 0)) || fail "snippets read rejects a FIFO store"
+pass "snippets read rejects a FIFO store without blocking"
+
+node -e '
+process.stdout.write(JSON.stringify({ version: 1, snippets: [{ id: "1", name: "big", content: "x".repeat(11 * 1024 * 1024) }] }))
+' >"$read_store_path"
+read_store >/dev/null 2>&1 && fail "snippets read rejects an oversized store"
+pass "snippets read rejects an oversized store"
+rm -f "$read_store_path"
+
+echo '{"version":1,"snippets":[]}' >"$read_store_path"
+if chown 65534 "$read_store_path" 2>/dev/null; then
+  read_store >/dev/null 2>&1 && fail "snippets read rejects a store owned by another user"
+  pass "snippets read rejects a store owned by another user"
+else
+  pass "wrong-owner store not testable without chown privilege; skipping"
+fi
+rm -f "$read_store_path"
+
+# CLI wiring: a hostile store must fail the whole command, not just the read.
+ln -s /etc/passwd "$read_store_path"
+HOME="$READ_HOME" "$ROOT/bin/omarchy-snippets-copy" "anything" >/dev/null 2>/tmp/snippets-symlink-err.$$ \
+  && fail "snippets CLI refuses to operate against a symlinked store"
+grep -q 'Could not read snippet store' /tmp/snippets-symlink-err.$$ \
+  || fail "snippets CLI surfaces a clear error for a hostile store"
+rm -f /tmp/snippets-symlink-err.$$ "$read_store_path"
+pass "snippets CLI refuses to operate against a symlinked store"

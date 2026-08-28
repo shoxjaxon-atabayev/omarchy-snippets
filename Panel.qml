@@ -24,7 +24,6 @@ Panel {
   moduleName: "community.shoxjaxon.snippets"
   ipcTarget: "community.shoxjaxon.snippets"
 
-  property string snippetsPath: Quickshell.env("HOME") + "/.local/state/omarchy/snippets.json"
   property var snippets: []
   // "list" | "form" | "delete-confirm" | "import-preview"
   property string view: "list"
@@ -65,8 +64,16 @@ Panel {
     return root.binDir + name
   }
 
+  // Reading happens through readProc (bin/omarchy-snippets-read) rather than
+  // a FileView pointed at snippets.json directly: that path is predictable
+  // and FileView offers no way to require O_NOFOLLOW/O_NONBLOCK, a regular
+  // file, our own ownership, or a size cap on what it opens, so a planted
+  // symlink/FIFO/oversized file there could block the shell or substitute
+  // content. readProc.checkFinished() sets root.snippets once the read
+  // comes back, which is why selection/list state that depends on
+  // root.snippets is settled there rather than right after loadSnippets().
   function loadSnippets() {
-    root.snippets = SnippetStore.parseStore(snippetsFile.text())
+    readProc.running = true
   }
 
   onOpenedChanged: {
@@ -74,7 +81,6 @@ Panel {
       root.view = "list"
       root.filterText = ""
       root.loadSnippets()
-      root.selectedIndex = root.rows.length > 0 ? 0 : -1
       Qt.callLater(function() { if (root.opened && root.view === "list") searchField.forceActiveFocus() })
     }
   }
@@ -205,7 +211,6 @@ Panel {
 
   function onDeleteFinished() {
     root.loadSnippets()
-    root.selectedIndex = root.rows.length > 0 ? 0 : -1
     root.view = "list"
     Qt.callLater(function() { searchField.forceActiveFocus() })
   }
@@ -297,15 +302,48 @@ Panel {
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
-  FileView {
-    id: snippetsFile
-    path: root.snippetsPath
-    watchChanges: true
-    atomicWrites: true
-    printErrors: false
-    onLoaded: root.loadSnippets()
-    onLoadFailed: root.snippets = []
-    onFileChanged: reload()
+  // See loadSnippets() above for why this reads through a CLI helper
+  // instead of a FileView. Same completion pattern as every Process below:
+  // onExited and the stdout stream can resolve in either order, so state is
+  // only acted on once both have reported in via checkFinished().
+  Process {
+    id: readProc
+    property bool exited: false
+    property bool stdoutFinished: false
+    property int finalExitCode: -1
+    property string stdoutText: ""
+
+    command: [root.binPath("omarchy-snippets-read")]
+
+    function checkFinished() {
+      if (exited && stdoutFinished) {
+        root.snippets = finalExitCode === 0 ? SnippetStore.parseStore(stdoutText) : []
+        root.selectedIndex = root.rows.length > 0 ? 0 : -1
+      }
+    }
+
+    onRunningChanged: {
+      if (running) {
+        exited = false; stdoutFinished = false;
+        finalExitCode = -1; stdoutText = "";
+      }
+    }
+
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        readProc.stdoutText = text
+        readProc.stdoutFinished = true
+        readProc.checkFinished()
+      }
+    }
+    stderr: StdioCollector {}
+
+    onExited: function(exitCode) {
+      readProc.finalExitCode = exitCode
+      readProc.exited = true
+      readProc.checkFinished()
+    }
   }
 
   // copyProc is separate from the detached pattern so the UI can confirm
