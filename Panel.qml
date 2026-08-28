@@ -747,9 +747,15 @@ Panel {
           }
         }
 
+        // Glyphs below are Material Design Icons codepoints from the Nerd
+        // Font already used for every icon elsewhere in the shell (e.g. the
+        // 󰠮 bar icon above) -- picked instead of plain Unicode symbols so
+        // this row reads as one consistent icon set rather than a mismatched
+        // one. Import/export deliberately use a matched down/up arrow pair:
+        // import brings a file in (down), export sends the store out (up).
         PanelActionButton {
           id: newButton
-          iconText: "+"
+          iconText: "󰐕" // md-plus
           tooltipText: "New snippet"
           foreground: root.foreground
           focusable: true
@@ -758,7 +764,7 @@ Panel {
 
         PanelActionButton {
           id: importButton
-          iconText: "⤓"
+          iconText: "󰜮" // md-arrow_down_bold
           tooltipText: "Import"
           foreground: root.foreground
           focusable: true
@@ -767,7 +773,7 @@ Panel {
 
         PanelActionButton {
           id: exportButton
-          iconText: "⤑"
+          iconText: "󰜷" // md-arrow_up_bold
           tooltipText: "Export"
           foreground: root.foreground
           enabled: root.snippets.length > 0
@@ -843,8 +849,9 @@ Panel {
             spacing: Style.space(2)
             visible: row.hasCursor || rowMouse.containsMouse
 
+            // Same Nerd Font MDI set as the row above.
             PanelActionButton {
-              iconText: "✎"
+              iconText: "󰏫" // md-pencil
               tooltipText: "Edit"
               foreground: root.foreground
               size: Style.space(20)
@@ -852,7 +859,7 @@ Panel {
             }
 
             PanelActionButton {
-              iconText: "✕"
+              iconText: "󰩹" // md-trash_can
               tooltipText: "Delete"
               foreground: root.foreground
               hoverColor: Color.urgent
