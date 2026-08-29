@@ -46,6 +46,11 @@ Panel {
   property string importError: ""
   property bool importBusy: false
 
+  // Set right before reopenPanel() calls root.open() after the import/export
+  // file-picker flow closed the panel, so onOpenedChanged's normal
+  // reset-to-list behavior doesn't stomp the view reopenPanel just set.
+  property bool suppressNextOpenReset: false
+
   readonly property var rows: SnippetStore.displayRows(root.snippets, root.filterText)
   readonly property color foreground: Color.popups.text
   readonly property color background: Color.popups.background
@@ -78,11 +83,30 @@ Panel {
 
   onOpenedChanged: {
     if (root.opened) {
-      root.view = "list"
-      root.filterText = ""
+      if (root.suppressNextOpenReset) {
+        root.suppressNextOpenReset = false
+      } else {
+        root.view = "list"
+        root.filterText = ""
+      }
       root.loadSnippets()
       Qt.callLater(function() { if (root.opened && root.view === "list") searchField.forceActiveFocus() })
     }
+  }
+
+  // Reopens the panel showing `view` after the import/export file-picker
+  // flow closed it (see beginImport/beginExport below). If the user already
+  // reopened it by hand while that picker/CLI process was still running in
+  // the background, onOpenedChanged already ran once and reset the view --
+  // this just updates it in place instead of calling open() again, since
+  // PanelController.show() is a no-op (and fires no change signal) when
+  // already open.
+  function reopenPanel(view) {
+    root.view = view
+    if (view === "list") root.filterText = ""
+    if (root.opened) return
+    root.suppressNextOpenReset = true
+    root.open()
   }
 
   onFilterTextChanged: {
@@ -217,24 +241,34 @@ Panel {
 
   // ---- import / export -------------------------------------------------
 
+  // Both begin* functions close the panel before the desktop portal's file
+  // chooser opens: this panel is a full-screen, always-on-top layer-shell
+  // surface with a screen-wide click-catching overlay (see
+  // KeyboardPanel.qml's dismissArea) whenever it's open, which can sit above
+  // and swallow input meant for a separate top-level picker window. Closing
+  // it first hands the compositor back to the picker cleanly; reopenPanel()
+  // (used by every completion path below) brings the panel back once the
+  // picker (and, for import, the preview) has a result to show.
   function beginExport() {
+    root.close()
     exportPickProc.command = [root.binPath("omarchy-snippets-file-select"), "--save-as", "snippets.json", "--title", "Export Snippets", "--extensions", "json"]
     exportPickProc.running = true
   }
 
   function onExportPathPicked(path) {
-    if (!path) return
+    if (!path) { root.reopenPanel("list"); return }
     exportProc.command = [root.binPath("omarchy-snippets-export"), path]
     exportProc.running = true
   }
 
   function beginImport() {
+    root.close()
     importPickProc.command = [root.binPath("omarchy-snippets-file-select"), "--title", "Import Snippets", "--extensions", "json"]
     importPickProc.running = true
   }
 
   function onImportPathPicked(path) {
-    if (!path) return
+    if (!path) { root.reopenPanel("list"); return }
     root.importFilePath = path
     root.importBusy = true
     importPreviewProc.command = [root.binPath("omarchy-snippets-import-preview"), path]
@@ -247,7 +281,7 @@ Panel {
       root.importError = errorText.trim() || "Invalid snippet file."
       root.importConflicts = []
       root.importNewCount = 0
-      root.view = "import-preview"
+      root.reopenPanel("import-preview")
       return
     }
     var parsed = JSON.parse(text)
@@ -257,7 +291,7 @@ Panel {
     var resolutions = {}
     for (var i = 0; i < root.importConflicts.length; i++) resolutions[root.importConflicts[i].name] = "skip"
     root.importResolutions = resolutions
-    root.view = "import-preview"
+    root.reopenPanel("import-preview")
   }
 
   function setImportResolution(name, action) {
@@ -535,6 +569,7 @@ Panel {
         if (finalExitCode !== 0) {
           Quickshell.execDetached(["omarchy-notification-send", stderrText.trim() || "Export failed.", "-u", "critical", "-t", "3000"])
         }
+        root.reopenPanel("list")
       }
     }
 
