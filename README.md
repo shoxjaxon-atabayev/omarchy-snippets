@@ -7,6 +7,12 @@ and commands locally, and copy them back with one click.
 Open → find → one click → copied.
 ```
 
+## Screenshots
+
+| Search & copy | New snippet |
+| --- | --- |
+| ![Snippet list with search](screenshots/main.png) | ![New snippet form](screenshots/create-window.png) |
+
 ## Features
 
 - Bar icon + anchored popup panel (no separate window)
