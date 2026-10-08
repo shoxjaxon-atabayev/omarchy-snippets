@@ -8,11 +8,9 @@ any snippet back to the clipboard with one click.
 Open → find → one click → copied.
 ```
 
-## Screenshots
+## Preview
 
-| Search & copy | New snippet |
-| --- | --- |
-| ![Snippet list with search](screenshots/main.png) | ![New snippet form](screenshots/create-window.png) |
+![Snipy snippet manager preview](preview.png)
 
 ## Features
 
