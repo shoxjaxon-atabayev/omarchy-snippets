@@ -1,8 +1,8 @@
-# Snipy
+# Snipy — Omarchy Snippet Manager
 
 ## 1. Feature Overview
 
-**Snipy** is a native, minimal Omarchy GUI for saving frequently used text and code snippets and quickly copying them when needed.
+**Snipy** is a native, minimal snippet manager for Omarchy: a GUI for saving frequently used text and code snippets and quickly copying them when needed.
 
 The feature is designed around one principle:
 

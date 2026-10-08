@@ -1,7 +1,8 @@
 # Snipy
 
-A native [Omarchy](https://omarchy.org) plugin: save frequently used text
-and commands locally, and copy them back with one click.
+A native snippet manager plugin for [Omarchy](https://omarchy.org): save
+code snippets, shell commands, and frequently used text locally, and copy
+any snippet back to the clipboard with one click.
 
 ```text
 Open → find → one click → copied.

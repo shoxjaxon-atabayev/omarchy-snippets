@@ -4,7 +4,7 @@
   "name": "Snipy",
   "version": "1.0.0",
   "author": "shoxjaxon",
-  "description": "Save and one-click copy frequently used text and commands",
+  "description": "Local snippet manager: save code snippets, shell commands, and frequently used text, then copy any snippet to the clipboard with one click.",
   "kinds": [
     "bar-widget"
   ],
@@ -13,7 +13,7 @@
   },
   "barWidget": {
     "displayName": "Snipy",
-    "description": "Save and one-click copy frequently used text and commands",
+    "description": "Local snippet manager: save code snippets, shell commands, and frequently used text, then copy any snippet to the clipboard with one click.",
     "category": "Files",
     "allowMultiple": false,
     "defaultSection": "right"
