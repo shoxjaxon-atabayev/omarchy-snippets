@@ -6,7 +6,7 @@ import qs.Ui
 import qs.Commons
 import "SnippetStore.js" as SnippetStore
 
-// Snippets (bar icon): save Name+Content text snippets locally and copy them
+// Snipy (bar icon): save Name+Content text snippets locally and copy them
 // back with one click. See docs/snippet-manager.md for the full spec. All
 // mutation goes through the bin/omarchy-snippets-* CLI, never straight to
 // snippets.json from here -- see that doc's storage section for why

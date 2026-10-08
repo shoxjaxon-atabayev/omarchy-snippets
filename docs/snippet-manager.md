@@ -1,8 +1,8 @@
-# Omarchy Snippet Manager
+# Snipy
 
 ## 1. Feature Overview
 
-The **Omarchy Snippet Manager** is a native, minimal GUI for saving frequently used text and code snippets and quickly copying them when needed.
+**Snipy** is a native, minimal Omarchy GUI for saving frequently used text and code snippets and quickly copying them when needed.
 
 The feature is designed around one principle:
 
@@ -20,7 +20,7 @@ Entry point:
 
 ```text
 Bar icon (click)
-└── Snippets
+└── Snipy
 ```
 
 This ships as a standalone Omarchy plugin rather than a core component, so
@@ -31,7 +31,7 @@ surfaces.
 Main interface:
 
 ```text
-Snippets
+Snipy
 ────────────────────────
 
 🔍 Search...
@@ -360,7 +360,7 @@ The exported file must contain:
 "version": 1
 ```
 
-This allows future versions of the Snippet Manager to evolve the format without breaking existing exports.
+This allows future versions of Snipy to evolve the format without breaking existing exports.
 
 The importer must validate the version before importing.
 
@@ -375,7 +375,7 @@ Export must allow the user to choose a local destination.
 Example:
 
 ```text
-Snippets
+Snipy
    ↓
 Export
    ↓
@@ -569,7 +569,7 @@ Requirements:
 
 - Search should be local.
 - No network operation may occur during normal use.
-- Opening the Snippets panel should not require a remote operation.
+- Opening the Snipy panel should not require a remote operation.
 - Copy should be immediate.
 - Search should not require spawning a process for every keystroke.
 - Import/export can be slower because they process files, but should still avoid unnecessary work.
@@ -585,7 +585,7 @@ Keyboard support should complement the one-click mouse workflow.
 Preferred flow:
 
 ```text
-Open Snippets
+Open Snipy
     ↓
 Type search
     ↓
@@ -598,7 +598,7 @@ Copied
 
 The exact global shortcut should be determined during implementation based on existing Omarchy keybinding conventions and conflict checks.
 
-A global shortcut is useful but is not required to define the core Snippet Manager behavior.
+A global shortcut is useful but is not required to define the core Snipy behavior.
 
 ---
 
@@ -754,7 +754,7 @@ Conceptual architecture:
 ```text
 Omarchy Menu
       ↓
-Snippet Manager UI
+Snipy UI
       ↓
 Local Snippet Store
       ↓
@@ -973,7 +973,7 @@ Content identical
 
 ### Privacy
 
-There must be no network dependency for normal Snippet Manager operation.
+There must be no network dependency for normal Snipy operation.
 
 Tests should ensure the feature does not invoke remote APIs or network services.
 
@@ -984,7 +984,7 @@ Tests should ensure the feature does not invoke remote APIs or network services.
 The first implementation includes exactly:
 
 ```text
-Snippet Manager
+Snipy
 ├── Search
 ├── Create
 ├── 1-click Copy
@@ -1031,7 +1031,7 @@ No remote sync.
 
 The feature is successful when a user can:
 
-1. Open Snippets quickly.
+1. Open Snipy quickly.
 2. Immediately search their snippets.
 3. Copy a snippet with exactly one click.
 4. Create a snippet with only a name and content.
@@ -1065,7 +1065,7 @@ The user should never feel like they are managing a database.
 
 The user should never feel like they are editing a configuration file.
 
-The Snippet Manager exists to make frequently reused content **immediately available with the least possible friction**.
+Snipy exists to make frequently reused content **immediately available with the least possible friction**.
 
 ---
 
@@ -1094,10 +1094,10 @@ the bar widget -- lives inside the plugin's own repository.
 
 Launch surfaces:
 
-- **Bar icon** -- click the Snippets icon in the bar.
+- **Bar icon** -- click the Snipy icon in the bar.
 - **Quickshell IPC** -- `omarchy-shell shell toggle community.shoxjaxon.snippets`.
 
-A core installation's fuzzy-search launcher entry ("Snippets" as a `trigger.*`
+A core installation's fuzzy-search launcher entry ("Snipy" as a `trigger.*`
 menu item) and automatic first-run bar seeding do not carry over to a
 standalone plugin: extending the core launcher and seeding a fresh install's
 default bar layout are both core-repo concerns with no public plugin API to

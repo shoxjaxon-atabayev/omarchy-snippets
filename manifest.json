@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "community.shoxjaxon.snippets",
-  "name": "Snippets",
+  "name": "Snipy",
   "version": "1.0.0",
   "author": "shoxjaxon",
   "description": "Save and one-click copy frequently used text and commands",
@@ -12,7 +12,7 @@
     "barWidget": "Panel.qml"
   },
   "barWidget": {
-    "displayName": "Snippets",
+    "displayName": "Snipy",
     "description": "Save and one-click copy frequently used text and commands",
     "category": "Files",
     "allowMultiple": false,

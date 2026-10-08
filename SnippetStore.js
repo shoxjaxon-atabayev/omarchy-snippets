@@ -1,4 +1,4 @@
-// Pure data-shaping helpers for the Snippets bar widget. Node-loadable (see
+// Pure data-shaping helpers for the Snipy bar widget. Node-loadable (see
 // the module.exports guard at the bottom) so this file is unit-tested
 // directly, the same convention shell/plugins/clipboard/ClipboardHistory.js
 // and shell/plugins/menu/MenuModel.js use in Omarchy core.

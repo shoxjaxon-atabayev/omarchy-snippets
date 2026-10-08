@@ -1,4 +1,4 @@
-# Shared helpers for the Snippet Manager CLI. Sourced by omarchy-snippets-*;
+# Shared helpers for the Snipy CLI. Sourced by omarchy-snippets-*;
 # not executable and not routed by any dispatcher.
 #
 # Snippet content can hold credentials (see docs/snippet-manager.md section

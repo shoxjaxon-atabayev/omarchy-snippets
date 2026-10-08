@@ -1,4 +1,4 @@
-# Omarchy Snippets
+# Snipy
 
 A native [Omarchy](https://omarchy.org) plugin: save frequently used text
 and commands locally, and copy them back with one click.
@@ -36,7 +36,7 @@ One command, adds the plugin and turns on the bar icon in one step:
 omarchy plugin add https://github.com/shoxjaxon-atabayev/omarchy-snippets --enable
 ```
 
-That's it — the Snippets icon appears in the bar (right section) immediately,
+That's it — the Snipy icon appears in the bar (right section) immediately,
 no restart needed.
 
 If you'd rather review the plugin before enabling it, split it into two
@@ -69,7 +69,7 @@ that file yourself if you want the data gone too.
 
 ## Usage
 
-Click the Snippets icon in the bar, or trigger it directly:
+Click the Snipy icon in the bar, or trigger it directly:
 
 ```sh
 omarchy-shell shell toggle community.shoxjaxon.snippets
