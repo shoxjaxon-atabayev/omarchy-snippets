@@ -3,6 +3,9 @@
 # Validate a snippet file and report import conflicts.
 # Usage: omarchy-snippets-import-preview <file>
 # Internal: invoked by Panel.qml via Process, not meant to be run by hand.
+#
+# The store and import document reach jq through --slurpfile, never
+# --argjson -- see the argv note at the top of omarchy-snippets-lib.
 
 set -euo pipefail
 
@@ -17,8 +20,9 @@ store=$(snippets_load)
 existing=$(jq '[.snippets[] | {(.name): .content}] | add // {}' <<<"$store")
 imported=$(jq '.snippets' <<<"$import_doc")
 
-jq -n --argjson existing "$existing" --argjson imported "$imported" '
-  reduce $imported[] as $item (
+jq -n --slurpfile existing <(printf '%s' "$existing") --slurpfile imported <(printf '%s' "$imported") '
+  $existing[0] as $existing | $imported[0] as $imported
+  | reduce $imported[] as $item (
     {conflicts: [], newCount: 0, map: $existing};
     ($item.name) as $name
     | if (.map | has($name)) then

@@ -140,7 +140,7 @@ jq -e '.version == 1 and (.snippets | length == 1)' "$export_path" >/dev/null \
 pass "snippets export writes the versioned interchange format"
 
 rm -f "$SNIPPETS_STORE"
-"$ROOT/bin/omarchy-snippets-import-apply" "$export_path" '[]' >/dev/null
+"$ROOT/bin/omarchy-snippets-import-apply" "$export_path" <<<'[]' >/dev/null
 jq -e '[.snippets[] | select(.name == "Control" and .content == "untouched")] | length == 1' "$SNIPPETS_STORE" >/dev/null \
   || fail "snippets export/import round trip restores name and content exactly"
 pass "snippets export/import round trip restores name and content exactly"

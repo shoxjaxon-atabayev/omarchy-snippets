@@ -1,15 +1,22 @@
 #!/bin/bash
 
 # Create or update a snippet.
-# Usage: omarchy-snippets-save <json>
-#   <json> is {"id": "<existing id or empty>", "name": "...", "content": "..."}
+# Usage: omarchy-snippets-save <<<'<json>'
+#   <json>, read from stdin, is {"id": "<existing id or empty>", "name": "...", "content": "..."}
 # Internal: invoked by Panel.qml via Process, not meant to be run by hand.
+#
+# The payload is read from stdin and name/content reach jq through --rawfile,
+# never as arguments -- see the argv note at the top of omarchy-snippets-lib.
 
 set -euo pipefail
 
 source "$(dirname "$(readlink -f "$0")")/omarchy-snippets-lib"
 
-payload=${1:-}
+# Refuse the old argument form outright rather than silently ignoring it, so
+# a stale caller fails loudly instead of putting a payload back on argv.
+(( $# == 0 )) || snippets_fail "Could not save snippet."
+
+payload=$(cat)
 [[ -n $payload ]] || snippets_fail "Could not save snippet."
 
 jq -e 'type == "object" and (has("name") and has("content"))' <<<"$payload" >/dev/null 2>&1 \
@@ -24,7 +31,7 @@ snippets_blank "$content" && snippets_fail "A snippet needs content."
 
 store=$(snippets_load)
 
-duplicate=$(jq -r --arg id "$id" --arg name "$name" \
+duplicate=$(jq -r --arg id "$id" --rawfile name <(printf '%s' "$name") \
   '[.snippets[] | select(.name == $name and .id != $id)] | length' <<<"$store")
 if (( duplicate > 0 )); then
   printf 'A snippet named "%s" already exists.\n' "$name" >&2
@@ -33,14 +40,15 @@ fi
 
 if [[ -z $id ]]; then
   id=$(snippets_new_id)
-  store=$(jq --arg id "$id" --arg name "$name" --arg content "$content" \
+  store=$(jq --arg id "$id" --rawfile name <(printf '%s' "$name") --rawfile content <(printf '%s' "$content") \
     '.snippets += [{id: $id, name: $name, content: $content}]' <<<"$store")
 else
   exists=$(jq -r --arg id "$id" '[.snippets[] | select(.id == $id)] | length' <<<"$store")
   (( exists > 0 )) || snippets_fail "Could not save snippet."
-  store=$(jq --arg id "$id" --arg name "$name" --arg content "$content" \
+  store=$(jq --arg id "$id" --rawfile name <(printf '%s' "$name") --rawfile content <(printf '%s' "$content") \
     '.snippets |= map(if .id == $id then {id: $id, name: $name, content: $content} else . end)' <<<"$store")
 fi
 
 snippets_write "$store"
-jq -cn --arg id "$id" --arg name "$name" --arg content "$content" '{id: $id, name: $name, content: $content}'
+jq -cn --arg id "$id" --rawfile name <(printf '%s' "$name") --rawfile content <(printf '%s' "$content") \
+  '{id: $id, name: $name, content: $content}'

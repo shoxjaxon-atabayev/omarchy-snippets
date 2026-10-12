@@ -123,11 +123,10 @@ Panel {
   function activateSelected() {
     if (root.selectedIndex < 0 || root.selectedIndex >= root.rows.length) return
     var row = root.rows[root.selectedIndex]
-    root.copySnippet(row.id, row.name)
+    root.copySnippet(row.id)
   }
 
-  function copySnippet(id, name) {
-    copyProc.pendingName = name
+  function copySnippet(id) {
     copyProc.command = [root.binPath("omarchy-snippets-copy"), id]
     copyProc.running = true
   }
@@ -196,8 +195,9 @@ Panel {
     if (SnippetStore.blank(root.formContent)) { root.formError = "A snippet needs content."; return }
     root.formError = ""
     root.formSaving = true
-    var payload = JSON.stringify({ id: root.editingId, name: root.formName, content: root.formContent })
-    saveProc.command = [root.binPath("omarchy-snippets-save"), payload]
+    saveProc.stdinPayload = JSON.stringify({ id: root.editingId, name: root.formName, content: root.formContent })
+    saveProc.command = [root.binPath("omarchy-snippets-save")]
+    saveProc.stdinEnabled = true
     saveProc.running = true
   }
 
@@ -319,7 +319,9 @@ Panel {
     var resolutions = []
     for (var name in root.importResolutions) resolutions.push({ name: name, action: root.importResolutions[name] })
     root.importBusy = true
-    importApplyProc.command = [root.binPath("omarchy-snippets-import-apply"), root.importFilePath, JSON.stringify(resolutions)]
+    importApplyProc.stdinPayload = JSON.stringify(resolutions)
+    importApplyProc.command = [root.binPath("omarchy-snippets-import-apply"), root.importFilePath]
+    importApplyProc.stdinEnabled = true
     importApplyProc.running = true
   }
 
@@ -382,7 +384,9 @@ Panel {
 
   // copyProc is separate from the detached pattern so the UI can confirm
   // success or surface a failure notification only after the clipboard write
-  // completes. pendingName carries the display name through to completion.
+  // completes. The success notification is a fixed "Copied": its text goes
+  // to omarchy-notification-send as an argument, readable by any local user
+  // through /proc/<pid>/cmdline, so it must not carry the snippet's name.
   //
   // Reading Process.exitCode from inside a StdioCollector's onStreamFinished
   // is not safe on its own: Quickshell can fire a stream's onStreamFinished
@@ -394,7 +398,6 @@ Panel {
   // by exportPickProc/importPickProc/importPreviewProc/importApplyProc.
   Process {
     id: copyProc
-    property string pendingName: ""
     property bool exited: false
     property bool stderrFinished: false
     property int finalExitCode: -1
@@ -402,10 +405,9 @@ Panel {
 
     function checkFinished() {
       if (exited && stderrFinished) {
-        var name = copyProc.pendingName
         if (finalExitCode === 0) {
           root.close()
-          Quickshell.execDetached(["omarchy-notification-send", "Copied \"" + name + "\"", "-t", "1500"])
+          Quickshell.execDetached(["omarchy-notification-send", "Copied", "-t", "1500"])
         } else {
           Quickshell.execDetached(["omarchy-notification-send", stderrText.trim() || "Could not copy snippet.", "-u", "critical", "-t", "3000"])
         }
@@ -435,12 +437,26 @@ Panel {
     }
   }
 
+  // The save payload carries the snippet's name and content, which can be a
+  // credential, so it goes to omarchy-snippets-save on stdin rather than as
+  // an argument: any local user can read argv through /proc/<pid>/cmdline.
+  // Same pattern Omarchy core's network panel uses for enterprise Wi-Fi
+  // secrets, plus closing stdin once written so the script reads to EOF.
+  // stdinEnabled is re-armed by saveForm() before every run, because
+  // starting with it false closes stdin before onStarted could write.
   Process {
     id: saveProc
+    property string stdinPayload: ""
     property bool exited: false
     property bool stderrFinished: false
     property int finalExitCode: -1
     property string stderrText: ""
+
+    onStarted: {
+      saveProc.write(saveProc.stdinPayload + "\n")
+      saveProc.stdinPayload = ""
+      saveProc.stdinEnabled = false
+    }
 
     function checkFinished() {
       if (exited && stderrFinished) {
@@ -684,12 +700,22 @@ Panel {
     }
   }
 
+  // Resolutions name the conflicting snippets, so they go over stdin for the
+  // same reason as saveProc's payload above; confirmImport() re-arms
+  // stdinEnabled before every run.
   Process {
     id: importApplyProc
+    property string stdinPayload: ""
     property bool exited: false
     property bool stderrFinished: false
     property int finalExitCode: -1
     property string stderrText: ""
+
+    onStarted: {
+      importApplyProc.write(importApplyProc.stdinPayload + "\n")
+      importApplyProc.stdinPayload = ""
+      importApplyProc.stdinEnabled = false
+    }
 
     function checkFinished() {
       if (exited && stderrFinished) {
@@ -910,7 +936,7 @@ Panel {
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             onContainsMouseChanged: if (containsMouse) root.selectedIndex = row.index
-            onClicked: root.copySnippet(row.modelData.id, row.modelData.name)
+            onClicked: root.copySnippet(row.modelData.id)
           }
         }
       }

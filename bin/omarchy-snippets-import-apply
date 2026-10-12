@@ -1,11 +1,14 @@
 #!/bin/bash
 
 # Apply a previously-validated snippet import.
-# Usage: omarchy-snippets-import-apply <file> <resolutions-json>
+# Usage: omarchy-snippets-import-apply <file> <<<'<resolutions-json>'
 # Internal: invoked by Panel.qml via Process, not meant to be run by hand.
 #
-# <resolutions-json> is an array of {"name": "...", "action": "skip"|"replace"|"keep-both"},
-# one entry per name omarchy-snippets-import-preview reported as a conflict.
+# <resolutions-json>, read from stdin (empty means []), is an array of
+# {"name": "...", "action": "skip"|"replace"|"keep-both"}, one entry per name
+# omarchy-snippets-import-preview reported as a conflict. It names snippets,
+# so like the store and import document it never travels as an argument --
+# see the argv note at the top of omarchy-snippets-lib.
 # Names not in the resolutions list are handled automatically: new names are
 # added, and names whose content is byte-identical to the current store are
 # skipped -- see docs/snippet-manager.md section 35.
@@ -15,12 +18,18 @@ set -euo pipefail
 source "$(dirname "$(readlink -f "$0")")/omarchy-snippets-lib"
 
 file=${1:-}
-resolutions=${2:-[]}
 [[ -n $file ]] || snippets_fail "Invalid snippet file."
+# Resolutions used to be a second argument; refuse that form rather than
+# ignore it, so a stale caller fails loudly instead of leaking names on argv.
+(( $# == 1 )) || snippets_fail "Could not import snippets."
+resolutions=$(cat)
+[[ -n $resolutions ]] || resolutions='[]'
 
 import_doc=$(snippets_load_import "$file")
 
-jq -e 'type == "array" and all(type == "object" and has("name") and has("action"))' \
+# -s plus length == 1: exactly one JSON value, as --argjson used to enforce,
+# since --slurpfile below would otherwise accept several and use the first.
+jq -e -s 'length == 1 and (.[0] | type == "array" and all(type == "object" and has("name") and has("action")))' \
   <<<"$resolutions" >/dev/null 2>&1 || snippets_fail "Could not import snippets."
 
 store=$(snippets_load)
@@ -33,15 +42,17 @@ id_count=$(jq 'length' <<<"$imported")
 ids=$(for _ in $(seq 1 "$id_count"); do snippets_new_id; done | jq -R -s -c 'split("\n") | map(select(length > 0))')
 
 result=$(jq -n \
-  --argjson store "$store" \
-  --argjson imported "$imported" \
-  --argjson resolutions "$resolutions" \
-  --argjson ids "$ids" '
+  --slurpfile store <(printf '%s' "$store") \
+  --slurpfile imported <(printf '%s' "$imported") \
+  --slurpfile resolutions <(printf '%s' "$resolutions") \
+  --slurpfile ids <(printf '%s' "$ids") '
   def nextUniqueName($byName; $base):
     def cand($n): if $n == 1 then $base + " (Imported)" else $base + " (Imported " + ($n | tostring) + ")" end;
     first(range(1; 1000000) | cand(.) as $c | select($byName | has($c) | not) | $c);
 
-  ($resolutions | map({(.name): .action}) | add // {}) as $resolutionMap
+  $store[0] as $store | $imported[0] as $imported
+  | $resolutions[0] as $resolutions | $ids[0] as $ids
+  | ($resolutions | map({(.name): .action}) | add // {}) as $resolutionMap
   | reduce $imported[] as $item (
       {byName: ($store.snippets | map({(.name): .}) | add // {}), idPos: 0};
       ($item.name) as $name

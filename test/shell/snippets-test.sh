@@ -97,7 +97,7 @@ chmod +x "$TMPDIR/bin/wl-copy"
 export HOME="$TMPDIR/home"
 export PATH="$TMPDIR/bin:$PATH"
 
-save() { "$ROOT/bin/omarchy-snippets-save" "$1"; }
+save() { "$ROOT/bin/omarchy-snippets-save" <<<"$1"; }
 delete() { "$ROOT/bin/omarchy-snippets-delete" "$1"; }
 copy() { "$ROOT/bin/omarchy-snippets-copy" "$1"; }
 snippets_store_path="$HOME/.local/state/omarchy/snippets.json"
@@ -166,7 +166,7 @@ before_names=$(jq -c '[.snippets[].name] | sort' "$snippets_store_path")
 preview=$("$ROOT/bin/omarchy-snippets-import-preview" "$export_path")
 [[ $(jq -r '.newCount' <<<"$preview") == "2" ]] || fail "snippets import-preview reports every snippet as new against an emptied store"
 pass "snippets import-preview reports every snippet as new against an emptied store"
-"$ROOT/bin/omarchy-snippets-import-apply" "$export_path" '[]' >/dev/null
+"$ROOT/bin/omarchy-snippets-import-apply" "$export_path" <<<'[]' >/dev/null
 after_names=$(jq -c '[.snippets[].name] | sort' "$snippets_store_path")
 [[ $before_names == "$after_names" ]] || fail "snippets export/import round trip restores the same names"
 pass "snippets export/import round trip restores the same names"
@@ -179,7 +179,7 @@ conflict_preview=$("$ROOT/bin/omarchy-snippets-import-preview" "$TMPDIR/conflict
 [[ $(jq -r '.conflicts | length' <<<"$conflict_preview") == "1" ]] || fail "snippets import-preview reports a differing-content conflict"
 pass "snippets import-preview reports a differing-content conflict"
 
-"$ROOT/bin/omarchy-snippets-import-apply" "$TMPDIR/conflict.json" '[{"name":"Docker cleanup","action":"keep-both"}]' >/dev/null
+"$ROOT/bin/omarchy-snippets-import-apply" "$TMPDIR/conflict.json" <<<'[{"name":"Docker cleanup","action":"keep-both"}]' >/dev/null
 jq -e '[.snippets[] | select(.name == "Docker cleanup (Imported)")] | length == 1' "$snippets_store_path" >/dev/null \
   || fail "snippets import keep-both adds a deterministically suffixed snippet"
 pass "snippets import keep-both adds a deterministically suffixed snippet"
@@ -192,7 +192,8 @@ pass "snippets import keep-both leaves the original snippet untouched"
 before_hash=$(sha256sum "$snippets_store_path")
 echo "not json" >"$TMPDIR/bad.json"
 "$ROOT/bin/omarchy-snippets-import-preview" "$TMPDIR/bad.json" >/dev/null 2>&1 && fail "snippets import-preview rejects invalid JSON"
-"$ROOT/bin/omarchy-snippets-import-apply" "$TMPDIR/bad.json" '[]' >/dev/null 2>&1 && fail "snippets import-apply rejects invalid JSON"
+"$ROOT/bin/omarchy-snippets-import-apply" "$TMPDIR/bad.json" <<<'[]' >/dev/null 2>"$TMPDIR/bad-apply.err" && fail "snippets import-apply rejects invalid JSON"
+grep -q 'Invalid snippet file' "$TMPDIR/bad-apply.err" || fail "snippets import-apply rejects invalid JSON for the right reason" "$(<"$TMPDIR/bad-apply.err")"
 after_hash=$(sha256sum "$snippets_store_path")
 [[ $before_hash == "$after_hash" ]] || fail "snippets store is byte-identical after a rejected import"
 pass "snippets store is byte-identical after a rejected import"
@@ -210,7 +211,7 @@ const items = []
 for (let i = 0; i < 1500; i++) items.push({ name: "bulk " + i, content: "content " + i })
 console.log(JSON.stringify({ version: 1, snippets: items }))
 ' >"$TMPDIR/large.json"
-"$ROOT/bin/omarchy-snippets-import-apply" "$TMPDIR/large.json" '[]' >/dev/null
+"$ROOT/bin/omarchy-snippets-import-apply" "$TMPDIR/large.json" <<<'[]' >/dev/null
 [[ $(jq '[.snippets[] | select(.name | startswith("bulk "))] | length' "$snippets_store_path") == "1500" ]] \
   || fail "snippets import-apply completes a 1500-snippet import as one write"
 pass "snippets import-apply completes a 1500-snippet import as one write"
@@ -408,8 +409,174 @@ pass "snippets import-read rejects a path swapped to a symlink before the single
 "$ROOT/bin/omarchy-snippets-import-preview" "$IMPORT_DIR/race.json" >/dev/null 2>&1 \
   && fail "snippets import-preview refuses a symlinked import file"
 pass "snippets import-preview refuses a symlinked import file"
-"$ROOT/bin/omarchy-snippets-import-apply" "$IMPORT_DIR/race.json" '[]' >/dev/null 2>&1 \
+"$ROOT/bin/omarchy-snippets-import-apply" "$IMPORT_DIR/race.json" <<<'[]' >/dev/null 2>"$IMPORT_DIR/race-apply.err" \
   && fail "snippets import-apply refuses a symlinked import file"
+grep -q 'Invalid snippet file' "$IMPORT_DIR/race-apply.err" \
+  || fail "snippets import-apply refuses a symlinked import file through the hardened reader" "$(<"$IMPORT_DIR/race-apply.err")"
 pass "snippets import-apply refuses a symlinked import file"
 
 rm -rf "$IMPORT_DIR"
+
+# ---- snippet data never travels on a process command line -----------------
+# Regression coverage for the marketplace security finding: any local user
+# can read another process's argv through /proc/<pid>/cmdline, so snippet
+# names, content, and import resolutions must reach the CLI and every
+# process it spawns over stdin or pipes, never as arguments. PATH is
+# narrowed to logging wrappers around exactly the external commands the CLI
+# uses, so every exec it makes is recorded -- and a command without a
+# wrapper fails loudly instead of slipping past the log. (The python
+# helpers are exec'd through an absolute shebang; their argv is just their
+# own path, plus the import file path for import-read.)
+
+ARGV_DIR="$TMPDIR/argv"
+ARGV_SHIMS="$ARGV_DIR/shims"
+ARGV_HOME="$ARGV_DIR/home"
+ARGV_LOG="$ARGV_DIR/argv.log"
+mkdir -p "$ARGV_SHIMS" "$ARGV_HOME/.local/state/omarchy"
+: >"$ARGV_LOG"
+
+for cmd in cat chmod dirname jq mkdir mktemp mv readlink seq wl-copy; do
+  real=$(type -P "$cmd") || fail "argv check can resolve $cmd"
+  cat >"$ARGV_SHIMS/$cmd" <<SH
+#!/bin/bash
+printf '%s\\0' "\$0" "\$@" >>"\$ARGV_LOG"
+exec $(printf '%q' "$real") "\$@"
+SH
+  chmod +x "$ARGV_SHIMS/$cmd"
+done
+
+argv_cli() {
+  PATH="$ARGV_SHIMS" HOME="$ARGV_HOME" ARGV_LOG="$ARGV_LOG" WL_COPY_OUT="$ARGV_DIR/copied" "$@"
+}
+argv_store="$ARGV_HOME/.local/state/omarchy/snippets.json"
+marker="argv-canary-$$-$RANDOM"
+secret_name="Prod token $marker"
+secret_content=$(printf 'export TOKEN=%s\n  "quoted" \\ back\tslash ключ🔑' "$marker")
+
+# Control: prove the log would catch a leak before trusting a clean one.
+argv_cli jq -n --arg leak "$marker" '$leak' >/dev/null
+grep -a -q -F -- "$marker" "$ARGV_LOG" || fail "argv log records a value passed as an argument"
+: >"$ARGV_LOG"
+pass "argv log records a value passed as an argument"
+
+create_payload=$(jq -cn --arg name "$secret_name" --arg content "$secret_content" '{id: "", name: $name, content: $content}')
+created=$(argv_cli "$ROOT/bin/omarchy-snippets-save" <<<"$create_payload")
+secret_id=$(jq -r '.id' <<<"$created")
+[[ $(jq -r '.content' <<<"$created") == "$secret_content" ]] || fail "snippets save over stdin reports the saved content"
+argv_cli "$ROOT/bin/omarchy-snippets-save" <<<"$create_payload" >/dev/null 2>"$ARGV_DIR/dup.err" \
+  && fail "snippets save over stdin still rejects a duplicate name"
+grep -q -F "A snippet named \"$secret_name\" already exists." "$ARGV_DIR/dup.err" \
+  || fail "snippets save over stdin still names the duplicate"
+
+secret_content="$secret_content (rotated)"
+update_payload=$(jq -cn --arg id "$secret_id" --arg name "$secret_name" --arg content "$secret_content" '{id: $id, name: $name, content: $content}')
+argv_cli "$ROOT/bin/omarchy-snippets-save" <<<"$update_payload" >/dev/null
+[[ $(jq -r --arg id "$secret_id" '.snippets[] | select(.id == $id) | .content' "$argv_store") == "$secret_content" ]] \
+  || fail "snippets save over stdin updates content in place"
+
+argv_cli "$ROOT/bin/omarchy-snippets-copy" "$secret_id" >/dev/null
+[[ $(<"$ARGV_DIR/copied") == "$secret_content" ]] || fail "snippets copy still sends the exact stored content"
+
+argv_cli "$ROOT/bin/omarchy-snippets-export" "$ARGV_DIR/exported.json"
+jq -e --arg name "$secret_name" '[.snippets[] | select(.name == $name)] | length == 1' "$ARGV_DIR/exported.json" >/dev/null \
+  || fail "snippets export still writes the stored snippet"
+
+jq -n --arg name "$secret_name" --arg marker "$marker" \
+  '{version: 1, snippets: [{name: $name, content: ("imported " + $marker)}, {name: ("New " + $marker), content: $marker}]}' \
+  >"$ARGV_DIR/import.json"
+argv_preview=$(argv_cli "$ROOT/bin/omarchy-snippets-import-preview" "$ARGV_DIR/import.json")
+jq -e --arg name "$secret_name" '.newCount == 1 and (.conflicts | length == 1 and .[0].name == $name)' <<<"$argv_preview" >/dev/null \
+  || fail "snippets import-preview still reports conflicts and new snippets"
+resolutions=$(jq -cn --arg name "$secret_name" '[{name: $name, action: "keep-both"}]')
+argv_cli "$ROOT/bin/omarchy-snippets-import-apply" "$ARGV_DIR/import.json" <<<"$resolutions" >/dev/null
+jq -e --arg name "$secret_name (Imported)" --arg marker "$marker" \
+  '[.snippets[] | select(.name == $name and .content == ("imported " + $marker))] | length == 1' "$argv_store" >/dev/null \
+  || fail "snippets import-apply honors resolutions read from stdin"
+
+argv_cli "$ROOT/bin/omarchy-snippets-delete" "$secret_id" >/dev/null
+
+grep -a -q -F -- '--rawfile' "$ARGV_LOG" && grep -a -q -F -- '--slurpfile' "$ARGV_LOG" \
+  || fail "argv log captured the CLI's jq calls"
+if grep -a -q -F -- "$marker" "$ARGV_LOG"; then
+  fail "no snippet name, content, or resolution appears in any process argv" \
+    "$(tr '\0' ' ' <"$ARGV_LOG" | grep -a -F -- "$marker" | head -c 400)"
+fi
+pass "no snippet name, content, or resolution appears in any process argv"
+
+# The old argument forms must fail loudly, not hang or quietly accept a
+# payload on argv again.
+before_hash=$(sha256sum "$argv_store")
+"$ROOT/bin/omarchy-snippets-save" '{"id":"","name":"argv","content":"argv"}' </dev/null >/dev/null 2>"$ARGV_DIR/save-arg.err" \
+  && fail "snippets save refuses a payload passed as an argument"
+grep -q 'Could not save snippet' "$ARGV_DIR/save-arg.err" || fail "snippets save names the refused argument form"
+HOME="$ARGV_HOME" "$ROOT/bin/omarchy-snippets-import-apply" "$ARGV_DIR/import.json" '[]' </dev/null >/dev/null 2>"$ARGV_DIR/apply-arg.err" \
+  && fail "snippets import-apply refuses resolutions passed as an argument"
+grep -q 'Could not import snippets' "$ARGV_DIR/apply-arg.err" || fail "snippets import-apply names the refused argument form"
+HOME="$ARGV_HOME" "$ROOT/bin/omarchy-snippets-import-apply" "$ARGV_DIR/import.json" <<<'[] []' >/dev/null 2>&1 \
+  && fail "snippets import-apply rejects more than one resolutions document"
+[[ $(sha256sum "$argv_store") == "$before_hash" ]] || fail "refused argument forms leave the store untouched"
+pass "old argument forms are refused and leave the store untouched"
+
+HOME="$ARGV_HOME" "$ROOT/bin/omarchy-snippets-import-apply" "$ARGV_DIR/import.json" </dev/null >/dev/null
+jq -e --arg marker "$marker" '[.snippets[] | select(.name == ("New " + $marker))] | length == 1' "$argv_store" >/dev/null \
+  || fail "snippets import-apply treats empty stdin as no resolutions"
+pass "snippets import-apply treats empty stdin as no resolutions"
+
+# ---- payloads larger than one argv string --------------------------------
+# Linux caps a single argv string at 128 KiB (MAX_ARG_STRLEN), so the old
+# argument-based transport could not save a snippet this large or import
+# once the store outgrew that size. Multibyte text also spans jq's 4 KiB
+# --rawfile read chunks many times over.
+
+node -e '
+let s = "  leading spaces, \"quotes\", \\backslash\\, tab\t, ключ🔑 é\n"
+while (Buffer.byteLength(s) < 200000) s += "строка " + s.length + " 🔑 \"q\" \\ \t\n"
+process.stdout.write(s + "end")
+' >"$ARGV_DIR/large-content"
+large_content=$(<"$ARGV_DIR/large-content")
+large_payload=$(jq -cn --rawfile content "$ARGV_DIR/large-content" '{id: "", name: "Large", content: $content}')
+large=$(HOME="$ARGV_HOME" "$ROOT/bin/omarchy-snippets-save" <<<"$large_payload")
+large_id=$(jq -r '.id' <<<"$large")
+HOME="$ARGV_HOME" WL_COPY_OUT="$ARGV_DIR/large-copied" "$ROOT/bin/omarchy-snippets-copy" "$large_id" >/dev/null
+cmp -s "$ARGV_DIR/large-content" "$ARGV_DIR/large-copied" \
+  || fail "snippets save and copy keep a 200 KB multibyte snippet byte-for-byte"
+pass "snippets save and copy keep a 200 KB multibyte snippet byte-for-byte"
+
+(( $(stat -c %s "$argv_store") > 131072 )) || fail "large-store fixture exceeds 128 KiB"
+jq -n '{version: 1, snippets: [{name: "After large", content: "x"}]}' >"$ARGV_DIR/after-large.json"
+HOME="$ARGV_HOME" "$ROOT/bin/omarchy-snippets-import-preview" "$ARGV_DIR/after-large.json" >/dev/null \
+  || fail "snippets import-preview works with a store larger than 128 KiB"
+HOME="$ARGV_HOME" "$ROOT/bin/omarchy-snippets-import-apply" "$ARGV_DIR/after-large.json" <<<'[]' >/dev/null \
+  || fail "snippets import-apply works with a store larger than 128 KiB"
+jq -e '[.snippets[] | select(.name == "After large")] | length == 1' "$argv_store" >/dev/null \
+  || fail "snippets import-apply adds snippets to a store larger than 128 KiB"
+[[ $(jq -r --arg id "$large_id" '.snippets[] | select(.id == $id) | .content' "$argv_store") == "$large_content" ]] \
+  || fail "snippets import-apply leaves a large existing snippet intact"
+pass "snippets import works with a store larger than 128 KiB"
+
+# ---- Panel.qml hands payloads over stdin, not argv -------------------------
+# The QML side can't run here, so guard its wiring statically: no Process
+# command list may carry the save payload, form fields, or resolutions, and
+# both stdin-fed processes must actually write their payload.
+
+if grep -nE '(command[[:space:]]*[:=][[:space:]]*\[).*(JSON\.stringify|[Pp]ayload|formName|formContent|resolutions)' "$ROOT/Panel.qml"; then
+  fail "Panel.qml never puts a snippet payload in a Process command"
+fi
+grep -q 'saveProc.write(saveProc.stdinPayload' "$ROOT/Panel.qml" \
+  && grep -q 'importApplyProc.write(importApplyProc.stdinPayload' "$ROOT/Panel.qml" \
+  || fail "Panel.qml writes the save payload and resolutions to stdin"
+pass "Panel.qml never puts a snippet payload in a Process command"
+
+# The copy notification's text is an argument to omarchy-notification-send,
+# so it must be the fixed "Copied", never the snippet's name: no
+# notification call may reference a name or content value, and the copy
+# path must not carry the name at all.
+grep -qF 'Quickshell.execDetached(["omarchy-notification-send", "Copied", "-t", "1500"])' "$ROOT/Panel.qml" \
+  || fail "Panel.qml copy notification is the fixed text \"Copied\""
+if grep -nE 'execDetached\(.*([Nn]ame|[Cc]ontent)' "$ROOT/Panel.qml"; then
+  fail "Panel.qml notifications never pass a snippet name or content as an argument"
+fi
+if grep -nE 'pendingName|copySnippet\([^)]*,' "$ROOT/Panel.qml"; then
+  fail "Panel.qml copy path does not carry the snippet name"
+fi
+pass "Panel.qml copy notification does not include the snippet name in its arguments"
