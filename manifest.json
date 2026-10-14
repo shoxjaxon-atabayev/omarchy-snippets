@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "community.shoxjaxon.snippets",
   "name": "Snipy",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "author": "shoxjaxon",
   "description": "Local snippet manager: save code snippets, shell commands, and frequently used text, then copy any snippet to the clipboard with one click.",
   "kinds": [

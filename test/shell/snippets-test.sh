@@ -580,3 +580,26 @@ if grep -nE 'pendingName|copySnippet\([^)]*,' "$ROOT/Panel.qml"; then
   fail "Panel.qml copy path does not carry the snippet name"
 fi
 pass "Panel.qml copy notification does not include the snippet name in its arguments"
+
+# ---- Panel.qml text inputs exist only while their view is shown ------------
+# Every editable Qt text input listens to QClipboard::dataChanged, so none
+# may stay instantiated while the panel or its view is hidden: each one has
+# to live inside a Loader's sourceComponent, and every Loader has to be
+# gated on listShown/formShown, which in turn follow panel.visible.
+
+ungated_inputs=$(awk '
+  { line = $0; gsub(/"([^"\\]|\\.)*"/, "", line) }
+  line ~ /sourceComponent:[^{]*\{/ && !inside { inside = 1; startDepth = depth }
+  line ~ /(^|[^A-Za-z.])(TextField|TextArea|TextInput|TextEdit)[[:space:]]*\{/ && !inside { print NR }
+  { opened = gsub(/\{/, "{", line); closed = gsub(/\}/, "}", line); depth += opened - closed
+    if (inside && depth <= startDepth) inside = 0 }
+' "$ROOT/Panel.qml")
+[[ -z $ungated_inputs ]] || fail "Panel.qml text inputs are only created inside a Loader (ungated at line(s): $ungated_inputs)"
+loaders=$(grep -cE '^[[:space:]]*Loader[[:space:]]*\{' "$ROOT/Panel.qml")
+gated_loaders=$(grep -cE '^[[:space:]]*active: root\.(listShown|formShown)$' "$ROOT/Panel.qml")
+(( loaders == 3 && gated_loaders == loaders )) \
+  || fail "Panel.qml gates every text-input Loader on listShown/formShown"
+grep -qE 'readonly property bool listShown: panel\.visible && root\.view === "list"' "$ROOT/Panel.qml" \
+  && grep -qE 'readonly property bool formShown: panel\.visible && root\.view === "form"' "$ROOT/Panel.qml" \
+  || fail "Panel.qml listShown/formShown follow the panel's visibility"
+pass "Panel.qml text inputs exist only while their view is shown"

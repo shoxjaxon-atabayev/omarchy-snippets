@@ -15,10 +15,19 @@ import "SnippetStore.js" as SnippetStore
 // The four views (list/form/delete-confirm/import-preview) are one flat set
 // of visibility-toggled siblings inside KeyboardPanel, not a Loader over
 // per-view Components: a Component introduces its own id scope, which would
-// make root-level functions like searchField.forceActiveFocus() unable to
-// see ids declared inside it, and KeyboardPanel's default content property
-// is typed list<Item> anyway (a bare Component isn't an Item). Audio/
-// Bluetooth/Network all use this same flat-tree-with-visible-bindings shape.
+// make root-level functions unable to see ids declared inside it, and
+// KeyboardPanel's default content property is typed list<Item> anyway (a
+// bare Component isn't an Item). Audio/Bluetooth/Network all use this same
+// flat-tree-with-visible-bindings shape.
+//
+// The editable text inputs are the exception: each one sits in a Loader
+// that is active only while its own view is on screen (listShown/formShown
+// below), so none of them exists while the panel or its view is hidden.
+// Every editable Qt text input subscribes to QClipboard::dataChanged for
+// its canPaste state, and a hidden-but-alive one would keep reacting to
+// clipboard changes no user of this panel asked for. Since their ids are
+// out of root's scope inside the Loaders, focus goes through
+// focusSearch()/focusName() instead.
 Panel {
   id: root
   moduleName: "community.shoxjaxon.snippets"
@@ -51,6 +60,12 @@ Panel {
   // reset-to-list behavior doesn't stomp the view reopenPanel just set.
   property bool suppressNextOpenReset: false
 
+  // panel.visible, not root.opened: the panel window stays mapped through
+  // its fade-out after close(), and the inputs should leave with it rather
+  // than vanish (and collapse the layout) mid-animation.
+  readonly property bool listShown: panel.visible && root.view === "list"
+  readonly property bool formShown: panel.visible && root.view === "form"
+
   readonly property var rows: SnippetStore.displayRows(root.snippets, root.filterText)
   readonly property color foreground: Color.popups.text
   readonly property color background: Color.popups.background
@@ -67,6 +82,14 @@ Panel {
 
   function binPath(name) {
     return root.binDir + name
+  }
+
+  function focusSearch() {
+    if (searchLoader.item) searchLoader.item.forceActiveFocus()
+  }
+
+  function focusName() {
+    if (nameLoader.item) nameLoader.item.forceActiveFocus()
   }
 
   // Reading happens through readProc (bin/omarchy-snippets-read) rather than
@@ -90,7 +113,7 @@ Panel {
         root.filterText = ""
       }
       root.loadSnippets()
-      Qt.callLater(function() { if (root.opened && root.view === "list") searchField.forceActiveFocus() })
+      Qt.callLater(function() { if (root.opened && root.view === "list") root.focusSearch() })
     }
   }
 
@@ -171,7 +194,7 @@ Panel {
     root.formContent = ""
     root.formError = ""
     root.view = "form"
-    Qt.callLater(function() { nameField.forceActiveFocus() })
+    Qt.callLater(function() { root.focusName() })
   }
 
   function beginEdit(id) {
@@ -182,12 +205,12 @@ Panel {
     root.formContent = snippet.content
     root.formError = ""
     root.view = "form"
-    Qt.callLater(function() { nameField.forceActiveFocus() })
+    Qt.callLater(function() { root.focusName() })
   }
 
   function cancelForm() {
     root.view = "list"
-    Qt.callLater(function() { searchField.forceActiveFocus() })
+    Qt.callLater(function() { root.focusSearch() })
   }
 
   function saveForm() {
@@ -210,7 +233,7 @@ Panel {
     root.loadSnippets()
     root.view = "list"
     root.filterText = ""
-    Qt.callLater(function() { searchField.forceActiveFocus() })
+    Qt.callLater(function() { root.focusSearch() })
   }
 
   // ---- delete ---------------------------------------------------------
@@ -225,7 +248,7 @@ Panel {
 
   function cancelDelete() {
     root.view = "list"
-    Qt.callLater(function() { searchField.forceActiveFocus() })
+    Qt.callLater(function() { root.focusSearch() })
   }
 
   function confirmDelete() {
@@ -236,7 +259,7 @@ Panel {
   function onDeleteFinished() {
     root.loadSnippets()
     root.view = "list"
-    Qt.callLater(function() { searchField.forceActiveFocus() })
+    Qt.callLater(function() { root.focusSearch() })
   }
 
   // ---- import / export -------------------------------------------------
@@ -312,7 +335,7 @@ Panel {
     root.importError = ""
     root.importConflicts = []
     root.view = "list"
-    Qt.callLater(function() { searchField.forceActiveFocus() })
+    Qt.callLater(function() { root.focusSearch() })
   }
 
   function confirmImport() {
@@ -502,7 +525,7 @@ Panel {
         } else {
           Quickshell.execDetached(["omarchy-notification-send", stderrText.trim() || "Could not delete snippet.", "-u", "critical", "-t", "3000"])
           root.view = "list"
-          Qt.callLater(function() { searchField.forceActiveFocus() })
+          Qt.callLater(function() { root.focusSearch() })
         }
       }
     }
@@ -780,30 +803,35 @@ Panel {
         width: parent.width
         spacing: Style.space(6)
 
-        TextField {
-          id: searchField
+        // Loaded only while the list is on screen -- see the header comment.
+        Loader {
+          id: searchLoader
           width: parent.width - newButton.width - importButton.width - exportButton.width - Style.space(18)
-          placeholderText: "Search snippets…"
-          text: root.filterText
-          onTextChanged: root.filterText = text
-          foreground: root.foreground
+          active: root.listShown
 
-          Keys.onPressed: function(event) {
-            if (event.key === Qt.Key_Down) { root.moveSelection(1); event.accepted = true }
-            else if (event.key === Qt.Key_Up) { root.moveSelection(-1); event.accepted = true }
-            else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.activateSelected(); event.accepted = true }
-            else if (event.key === Qt.Key_F2) {
-              if (root.selectedIndex >= 0 && root.selectedIndex < root.rows.length)
-                root.beginEdit(root.rows[root.selectedIndex].id)
-              event.accepted = true
-            } else if (event.key === Qt.Key_Delete) {
-              if (root.selectedIndex >= 0 && root.selectedIndex < root.rows.length)
-                root.beginDelete(root.rows[root.selectedIndex].id)
-              event.accepted = true
-            } else if (event.key === Qt.Key_Escape) {
-              if (text.length > 0) { text = "" }
-              else root.close()
-              event.accepted = true
+          sourceComponent: TextField {
+            placeholderText: "Search snippets…"
+            text: root.filterText
+            onTextChanged: root.filterText = text
+            foreground: root.foreground
+
+            Keys.onPressed: function(event) {
+              if (event.key === Qt.Key_Down) { root.moveSelection(1); event.accepted = true }
+              else if (event.key === Qt.Key_Up) { root.moveSelection(-1); event.accepted = true }
+              else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.activateSelected(); event.accepted = true }
+              else if (event.key === Qt.Key_F2) {
+                if (root.selectedIndex >= 0 && root.selectedIndex < root.rows.length)
+                  root.beginEdit(root.rows[root.selectedIndex].id)
+                event.accepted = true
+              } else if (event.key === Qt.Key_Delete) {
+                if (root.selectedIndex >= 0 && root.selectedIndex < root.rows.length)
+                  root.beginDelete(root.rows[root.selectedIndex].id)
+                event.accepted = true
+              } else if (event.key === Qt.Key_Escape) {
+                if (text.length > 0) { text = "" }
+                else root.close()
+                event.accepted = true
+              }
             }
           }
         }
@@ -965,13 +993,19 @@ Panel {
         font.pixelSize: Style.font.caption
       }
 
-      TextField {
-        id: nameField
+      // This and the content editor below are loaded only while the form is
+      // on screen -- see the header comment.
+      Loader {
+        id: nameLoader
         width: parent.width
-        text: root.formName
-        onTextChanged: root.formName = text
-        foreground: root.foreground
-        Keys.onEscapePressed: root.cancelForm()
+        active: root.formShown
+
+        sourceComponent: TextField {
+          text: root.formName
+          onTextChanged: root.formName = text
+          foreground: root.foreground
+          Keys.onEscapePressed: root.cancelForm()
+        }
       }
 
       Text {
@@ -990,21 +1024,24 @@ Panel {
         border.color: Util.alpha(root.foreground, 0.28)
         border.width: Style.normalBorderWidth
 
-        ScrollView {
+        Loader {
           anchors.fill: parent
           anchors.margins: Style.space(6)
-          clip: true
+          active: root.formShown
 
-          TextArea {
-            id: contentField
-            text: root.formContent
-            onTextChanged: root.formContent = text
-            wrapMode: TextArea.Wrap
-            color: root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
-            background: null
-            Keys.onEscapePressed: root.cancelForm()
+          sourceComponent: ScrollView {
+            clip: true
+
+            TextArea {
+              text: root.formContent
+              onTextChanged: root.formContent = text
+              wrapMode: TextArea.Wrap
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              background: null
+              Keys.onEscapePressed: root.cancelForm()
+            }
           }
         }
       }

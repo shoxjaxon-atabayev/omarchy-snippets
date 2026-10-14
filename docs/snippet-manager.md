@@ -732,6 +732,10 @@ Because snippets can contain sensitive information:
 - Never include snippet content in telemetry.
 - Never include snippet content in error reports.
 - Do not expose content in desktop notifications.
+- Never pass snippet names or content as process arguments (any local user
+  can read them through `/proc/<pid>/cmdline`); hand them over on stdin.
+- Create editable text inputs only while their view is on screen, so the
+  panel does not react to clipboard changes while it or that view is hidden.
 - Use local user-owned storage.
 - Preserve file permissions.
 - Import only user-selected local files.
